@@ -2,10 +2,13 @@ math.randomseed(os.time())
 -- //////////////////////////////////////////////////////////////////////////////////////////////
 -- //////////////////////////////////////////////////////////////////////////////////////////////
 -- //////////////////////////////////////////////////////////////////////////////////////////////
-local maxPlayerCap = -1 -- set this to YOUR city max player cap. change from maxcap to -1 to simulate full.
+-- local maxPlayerCap = GetConvarInt('sv_maxclients', 9) -- set this to YOUR city max player cap. change from maxcap to -1 to simulate full.
+local maxPlayerCap = 9
 -- //////////////////////////////////////////////////////////////////////////////////////////////
 -- //////////////////////////////////////////////////////////////////////////////////////////////
 -- //////////////////////////////////////////////////////////////////////////////////////////////
+local QueueStaff = {}
+local QueuePrio = {}
 local QueueClient = {}
 local OnlineClient = {}
 local TermsCard = json.decode(LoadResourceFile(GetCurrentResourceName(), "tos.json"))
@@ -87,25 +90,101 @@ DBLog = function(msg)
 end
 ---
 function CheckBanList(ids)
+	local foundUser = nil
+	-- check license
 	local dbUser = execQuery(MySQL.query.await, 'SELECT * FROM `_mkBanList` WHERE `license` = ?', { ids.license })
 	if dbUser[1] ~= nil then
-        return dbUser
-    else
-        return -1
+        foundUser = dbUser[1]
 	end
+	-- check fivem
+	if ids.fivem ~= nil then
+		local dbUser = execQuery(MySQL.query.await, 'SELECT * FROM `_mkBanList` WHERE `fivem` = ?', { ids.fivem })
+		if dbUser[1] ~= nil then
+			foundUser = dbUser[1]
+		end
+	end
+	-- check steam
+	if ids.steam ~= nil then
+		local dbUser = execQuery(MySQL.query.await, 'SELECT * FROM `_mkBanList` WHERE `steam` = ?', { ids.steam })
+		if dbUser[1] ~= nil then
+			foundUser = dbUser[1]
+		end	
+	end
+	-- check discord
+	if ids.discord ~= nil then
+		local dbUser = execQuery(MySQL.query.await, 'SELECT * FROM `_mkBanList` WHERE `discord` = ?', { ids.discord })
+		if dbUser[1] ~= nil then
+			foundUser = dbUser[1]
+		end
+	end
+	-- check xbl
+	if ids.xbl ~= nil then
+		local dbUser = execQuery(MySQL.query.await, 'SELECT * FROM `_mkBanList` WHERE `xbl` = ?', { ids.xbl })
+		if dbUser[1] ~= nil then
+			foundUser = dbUser[1]
+		end
+	end
+	-- check live
+	if ids.live ~= nil then
+		local dbUser = execQuery(MySQL.query.await, 'SELECT * FROM `_mkBanList` WHERE `live` = ?', { ids.live })
+		if dbUser[1] ~= nil then
+			foundUser = dbUser[1]
+		end
+	end
+	-- check ip
+	if ids.ip ~= nil then
+		local dbUser = execQuery(MySQL.query.await, 'SELECT * FROM `_mkBanList` WHERE `ip` = ?', { ids.ip })
+		if dbUser[1] ~= nil then
+			foundUser = dbUser[1]
+		end
+	end
+	if foundUser ~= nil then
+		return foundUser
+	else
+		return -1
+	end	
+end
+---
+function UpdateIdentifiers(ids)
+	if ids.fivem ~= nil then
+		local updateId = execQuery(MySQL.query.await, 'UPDATE `_mkAccount` SET `fivem` = ? WHERE `license` = ?', { ids.fivem, ids.license })
+	end
+	if ids.steam ~= nil then
+		local updateId = execQuery(MySQL.query.await, 'UPDATE `_mkAccount` SET `steam` = ? WHERE `license` = ?', { ids.steam, ids.license })
+	end
+	if ids.discord ~= nil then
+		local updateId = execQuery(MySQL.query.await, 'UPDATE `_mkAccount` SET `discord` = ? WHERE `license` = ?', { ids.discord, ids.license })
+	end
+	if ids.xbl ~= nil then
+		local updateId = execQuery(MySQL.query.await, 'UPDATE `_mkAccount` SET `xbl` = ? WHERE `license` = ?', { ids.xbl, ids.license })
+	end
+	if ids.live ~= nil then
+		local updateId = execQuery(MySQL.query.await, 'UPDATE `_mkAccount` SET `live` = ? WHERE `license` = ?', { ids.live, ids.license })
+	end
+	if ids.ip ~= nil then
+		local updateId = execQuery(MySQL.query.await, 'UPDATE `_mkAccount` SET `ip` = ? WHERE `license` = ?', { ids.ip, ids.license })
+	end
+	print('Updated Player Secondary Identifiers:', ids.license)
 end
 ---
 function CheckAccount(ids)
 	local dbUser = execQuery(MySQL.query.await, 'SELECT * FROM `_mkAccount` WHERE `license` = ?', { ids.license })
 	if dbUser[1] ~= nil then
-		local updateuserids = execQuery(MySQL.query.await, 'UPDATE `_mkAccount` SET `fivem` = ?, `steam` = ?, `discord` = ?, `xbl` = ?, `live` = ?, `ip` = ? WHERE `license` = ?', { ids.fivem, ids.steam, ids.discord, ids.xbl, ids.live, ids.ip, ids.license })
-        return dbUser
+		UpdateIdentifiers(ids)
+        return dbUser[1]
     else
         local newUser = execQuery(MySQL.query.await, 'INSERT INTO `_mkAccount` (license, name, ip) VALUES (?,?,?)', { ids.license, ids.name, ids.ip })
-		local updateuserids = execQuery(MySQL.query.await, 'UPDATE `_mkAccount` SET `fivem` = ?, `steam` = ?, `discord` = ?, `xbl` = ?, `live` = ?,`license2` = ?, WHERE `license` = ?', { ids.fivem, ids.steam, ids.discord, ids.xbl, ids.live, ids.license2, ids.license })
+		UpdateIdentifiers(ids)
 		local newConsumables = execQuery(MySQL.query.await, 'INSERT INTO `_mkConsumables` (license) VALUES (?)', { ids.license })
     	local dbuser2 = execQuery(MySQL.query.await, 'SELECT * FROM `_mkAccount` WHERE `license` = ?', { ids.license })
-		return dbuser2
+		return dbuser2[1]
+	end
+end
+---
+function MakeRoomForStaff()
+	if OnlineClient[1] ~= nil then
+		DropPlayer(OnlineClient[1].pSrc, 'Player Removed For Staff Connection. Please Requeue. Our Apologies!')
+		OnlineClient[1] = nil
 	end
 end
 ---
@@ -129,64 +208,102 @@ AddEventHandler('playerConnecting', function(name, setKickReason, deferrals)
 	deferrals.presentCard(TextCard)
 	Citizen.Wait(1000)    
     if pIds.license == nil then 
-        setKickReason('No License?? Thats an Issue, Restart FiveM')
 		DBLog('License Missing: ['..pSrc..']')
+        deferrals.done('No License?? Thats an Issue, Restart FiveM')
         CancelEvent()
     end
 	TextCard.body[1].items[1].columns[2].items[2].columns[2].items[3].text = 'Name Check.'
 	deferrals.presentCard(TextCard)
 	Citizen.Wait(1000)
     if pIds.name == nil or pIds.name == "" then 
-        setKickReason('Your Name is broken!?? Thats an Issue, Restart FiveM')
 		DBLog('Name Missing: ['..pSrc..']')
+        deferrals.done('Your Name is broken!?? Thats an Issue, Restart FiveM')
         CancelEvent()
     end
 	TextCard.body[1].items[1].columns[2].items[2].columns[2].items[4].text = 'Ban Check.'
 	deferrals.presentCard(TextCard)
 	Citizen.Wait(1000)       
     if CheckBanList(pIds) ~= -1 then
-        setKickReason('One or more of your details are Banned. Contact Staff.')
 		DBLog('Banned Connection: ['..pSrc..'] '..pIds.name..'')  
+        deferrals.done('One or more of your details are Banned. Contact Staff.')
         CancelEvent()
     end
-	TextCard.body[1].items[1].columns[2].items[2].columns[2].items[5].text = 'Deferrals Completed for: ['..pSrc..'] '..pIds.name..'. Please wait.'
-	deferrals.presentCard(TextCard)
-	Citizen.Wait(2500) 
 	DBLog('Deferrals Completed for: ['..pSrc..'] '..pIds.name..'')     
 	-- --
 	local pAccount = CheckAccount(pIds)
-	if pAccount[1]['permissions'] ~= nil then
-		local pPerms = json.decode(pAccount[1]['permissions'])
-		if pPerms.wl ~= nil then
-			if pPerms.wl >= 1 then
-				pAccount.deferrals = deferrals
-				pAccount.qStart = os.time()
-				table.insert(QueueClient, 1, pAccount)
-			else
-				deferrals.done('\n=||= We are currently in Dev Testing. =||=\nOnly Staff Have Access At this Time.\nTry Again Later')
-			end
-		else
-			deferrals.done('\n=||= We are currently in Dev Testing. =||=\nOnly Staff Have Access At this Time.\nTry Again Later')
+	pAccount.pSrc = pSrc
+	pAccount.deferrals = deferrals
+	pAccount.qStart = os.time()
+	if pAccount.permissions ~= nil then
+		local perms = json.decode(pAccount.permissions)
+		if perms.staff then
+			table.insert(QueueStaff, 1, pAccount)
+		end
+		if perms.prio then
+			table.insert(QueuePrio, 1, pAccount)
 		end
 	else
-		deferrals.done('\n=||= We are currently in Dev Testing. =||=\nOnly Staff Have Access At this Time.\nTry Again Later')
+		table.insert(QueueClient, 1, pAccount)
 	end
 end)
 ----------------------------------------------------------------------------
 Citizen.CreateThread(function()
 	while true do
-		for i, qPlayer in pairs(QueueClient) do
-			if #OnlineClient < maxPlayerCap then 
+		-- staff queue
+		for i, qPlayer in pairs(QueueStaff) do
+			if #OnlineClient < maxPlayerCap then
+				table.insert(OnlineClient, 1, QueueStaff[i])
+				QueueStaff[i]= nil
+				qPlayer.deferrals.done()
+			else
+				MakeRoomForStaff()
+				table.insert(OnlineClient, 1, QueueStaff[i])
+				QueueStaff[i]= nil
+				qPlayer.deferrals.done()
+			end
+		end
+		-- prio queue
+		for i, qPlayer in pairs(QueuePrio) do
+			if #OnlineClient < maxPlayerCap then
+				table.insert(OnlineClient, 1, QueuePrio[i])
+				QueuePrio[i]= nil 
 				qPlayer.deferrals.done()				
 			else
-				-- check player exists using playerendpoint
-				-- if not splice user out of queue				
-				local qDiff = (os.time() - qPlayer.qStart)
-				local qpos = 'In Queue [ '..#QueueClient..' ] Position [ '..i..' ]'
-				local tIQ = 'Time In Queue: ['..qDiff..']'
-				QueueCard.body[1].items[1].columns[2].items[2].columns[2].items[2].text = qpos
-				QueueCard.body[1].items[1].columns[2].items[2].columns[2].items[3].text = tIQ
-				qPlayer.deferrals.presentCard(QueueCard)
+				if GetPlayerEndpoint(qPlayer.pSrc) ~= nil then
+					local qDiff = (os.time() - qPlayer.qStart)
+					local qpos = 'In Priority Queue [ '..#QueuePrio..' ] Position [ '..i..' ]'
+					local tIQ = 'Time In Queue: ['..qDiff..']'
+					QueueCard.body[1].items[1].columns[2].items[2].columns[2].items[2].text = qpos
+					QueueCard.body[1].items[1].columns[2].items[2].columns[2].items[3].text = tIQ
+					qPlayer.deferrals.presentCard(QueueCard)
+				else
+					QueuePrio[i]= nil
+				end	
+			end
+		end
+		-- player queue
+		for i, qPlayer in pairs(QueueClient) do
+			if #OnlineClient < maxPlayerCap then 
+				table.insert(OnlineClient, 1, QueueClient[i])
+				QueueClient[i]= nil 
+				qPlayer.deferrals.done()				
+			else
+				if GetPlayerEndpoint(qPlayer.pSrc) ~= nil then
+					local qDiff = (os.time() - qPlayer.qStart)
+					local qpos = 'In Player Queue [ '..#QueueClient..' ] Position [ '..i..' ]'
+					local tIQ = 'Time In Queue: ['..qDiff..']'
+					QueueCard.body[1].items[1].columns[2].items[2].columns[2].items[2].text = qpos
+					QueueCard.body[1].items[1].columns[2].items[2].columns[2].items[3].text = tIQ
+					qPlayer.deferrals.presentCard(QueueCard)
+				else
+					QueueClient[i]= nil
+				end	
+			end
+		end
+		-- online player check
+		for i, qPlayer in pairs(OnlineClient) do
+			if GetPlayerEndpoint(qPlayer.pSrc) ~= nil then
+				OnlineClient[i]= nil
 			end
 		end
 		Citizen.Wait(100)
